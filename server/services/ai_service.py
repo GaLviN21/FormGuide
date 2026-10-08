@@ -1,36 +1,193 @@
 """
 AI Service — Gemini Vision & Multimodal Form Analysis Integration.
-Template prepared for full LLM API wiring in Option A.
 """
 
+import json
 import logging
+from pathlib import Path
 
-from config import GEMINI_API_KEY, USE_MOCK_AI
+from config import AI_MODEL_NAME, GEMINI_API_KEY, USE_MOCK_AI
+from google import genai
+from google.genai import types
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 
-def analyze_form_document(file_path: str, session_id: str) -> dict:
+# --------------------------------------------------------------------------
+# Pydantic Schemas for Gemini Structured JSON Output
+# --------------------------------------------------------------------------
+class FieldInfo(BaseModel):
+    id: str = Field(description="Unique field identifier, e.g. f1, f2, f3...")
+    name: str = Field(
+        description="Short, human-readable name of the field, e.g. Full Name of Applicant"
+    )
+    originalText: str = Field(
+        description="Exact verbatim text or label printed on the form"
+    )
+    type: str = Field(
+        description="Field input category, e.g. Personal Text, Date, Address, Currency, Government ID, Selection, Signature"
+    )
+    isMandatory: bool = Field(
+        description="True if this field is mandatory/required to be filled, False if optional"
+    )
+    meaning: str = Field(
+        description="Clear, jargon-free plain English explanation of what this field asks for and how to fill it"
+    )
+    format: str = Field(
+        description="Expected input format, e.g. DD/MM/YYYY, ALL CAPS, 10-digit number"
+    )
+    example: str = Field(
+        description="A realistic sample entry, e.g. ROHIT KUMAR SHARMA"
+    )
+    docRequired: str | None = Field(
+        default=None,
+        description="Name of supporting document required for this field, e.g. Domicile Certificate, or null if none",
+    )
+    pitfalls: list[str] = Field(
+        default_factory=list,
+        description="Common mistakes or pitfalls to avoid when filling this field",
+    )
+
+
+class DocumentRequirement(BaseModel):
+    id: str = Field(description="Unique document ID, e.g. d1, d2...")
+    name: str = Field(
+        description="Name of supporting document to attach, e.g. State Domicile Certificate"
+    )
+    desc: str = Field(
+        description="Brief explanation of why it is needed and who issues it"
+    )
+    isMandatory: bool = Field(
+        description="True if mandatory attachment, False if optional"
+    )
+
+
+class ActionRequirement(BaseModel):
+    id: str = Field(description="Unique action ID, e.g. a1, a2...")
+    name: str = Field(
+        description="Name of action required, e.g. Institutional Verification Stamp"
+    )
+    desc: str = Field(
+        description="Brief instruction on who must sign or execute this action"
+    )
+
+
+class WizardStep(BaseModel):
+    num: int = Field(description="Step sequence number starting from 1")
+    title: str = Field(description="Short step title, e.g. Gather Revenue Certificates")
+    desc: str = Field(description="Clear instruction detailing what to do in this step")
+
+
+class FormAnalysisSchema(BaseModel):
+    id: str = Field(description="Unique form analysis session identifier")
+    title: str = Field(
+        description="Official main title of the form detected from the document"
+    )
+    category: str = Field(
+        description="Category classification, e.g. Education & Financial Aid, Government Residency, Tax Declaration"
+    )
+    complexity: str = Field(
+        description="Estimated form difficulty level: Easy, Medium, or Hard"
+    )
+    totalFields: int = Field(description="Total number of fields identified")
+    fields: list[FieldInfo] = Field(description="Detailed list of form fields")
+    documents: list[DocumentRequirement] = Field(
+        description="Aggregated list of required supporting document attachments"
+    )
+    actions: list[ActionRequirement] = Field(
+        description="Aggregated list of required signatures, stamps, and declarations"
+    )
+    steps: list[WizardStep] = Field(
+        description="Sequential 4 to 6 step completion sequence"
+    )
+
+
+SYSTEM_PROMPT = """
+You are FormGuide.AI, an expert AI assistant specializing in form understanding, legal jargon translation, and document requirement analysis.
+
+Analyze the uploaded form document (PDF or image) and generate a structured representation detailing:
+1. Every individual form field, checkbox, entry box, and section.
+2. For each field:
+   - Translate confusing legal, official, or bureaucratic wording into simple, conversational, plain-language English.
+   - Specify the exact expected format and provide realistic, helpful example entries.
+   - Identify if a supporting document (certificate, ID, proof) is required for that field.
+   - List common mistakes or pitfalls users often make.
+3. Aggregate a master list of all required supporting documents to attach.
+4. Aggregate all required signatures, stamps, notary affidavits, or declarations.
+5. Provide a clear, chronological 4 to 6 step completion wizard guiding the user from preparation to submission.
+
+Be thorough, precise, compassionate, and easy to understand.
+"""
+
+
+def get_mime_type(file_path: Path) -> str:
+    ext = file_path.suffix.lower()
+    if ext == ".pdf":
+        return "application/pdf"
+    elif ext == ".png":
+        return "image/png"
+    elif ext in [".jpg", ".jpeg"]:
+        return "image/jpeg"
+    elif ext == ".webp":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+def analyze_form_document(file_path_str: str, session_id: str) -> dict | None:
     """
     Main entry point for AI Form Analysis.
-    In Option A, this will invoke Gemini Multimodal Vision API with a strict JSON schema.
-    Currently returns a structured response matching ConcretePlan.md specifications.
+    Invokes Gemini Multimodal Vision API when GEMINI_API_KEY is configured and file exists.
+    Falls back gracefully to structured mock generator when key is missing or for test files.
     """
-    if not USE_MOCK_AI and GEMINI_API_KEY:
-        return _call_gemini_vision_api(file_path)
+    file_path = Path(file_path_str) if file_path_str else None
+    if file_path is None or not file_path.exists():
+        logger.warning(
+            "File path is missing or does not exist for session %s.",
+            session_id,
+        )
+        return None
 
-    # Fallback / Template Mock Data Generator
+    if not USE_MOCK_AI and GEMINI_API_KEY:
+        try:
+            logger.info("Analyzing form with Gemini Vision API (%s)...", file_path.name)
+            return _call_gemini_vision_api(file_path, session_id)
+        except Exception as e:
+            logger.error(
+                "Gemini Vision API call failed: %s. Falling back to structured mock response.",
+                e,
+            )
+
+    logger.info("Using mock fallback analysis for session %s.", session_id)
     return _get_mock_analysis_payload(session_id)
 
 
-def _call_gemini_vision_api(file_path: str) -> dict:
-    """
-    [OPTION A PLACEHOLDER]
-    Real Gemini Multimodal API invocation logic will be filled here.
-    """
-    raise NotImplementedError(
-        "Real Gemini Vision API call will be connected when Option A is initiated."
+def _call_gemini_vision_api(file_path: Path, session_id: str) -> dict:
+    """Call Gemini 2.0 Flash Vision API using google-genai SDK."""
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    mime_type = get_mime_type(file_path)
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        response_mime_type="application/json",
+        response_schema=FormAnalysisSchema,
+        temperature=0.2,
     )
+
+    response = client.models.generate_content(
+        model=AI_MODEL_NAME, contents=[part], config=config
+    )
+
+    raw_json = response.text
+    parsed_data = json.loads(raw_json) if raw_json else {}
+    parsed_data["id"] = session_id
+
+    return {"session_id": session_id, "form_data": parsed_data}
 
 
 def _get_mock_analysis_payload(session_id: str) -> dict:

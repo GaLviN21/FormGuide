@@ -8,7 +8,11 @@ from config import CLIENT_DIR, MAX_CONTENT_LENGTH
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from services.ai_service import analyze_form_document
-from services.file_service import cleanup_session, save_uploaded_file
+from services.file_service import (
+    cleanup_session,
+    get_session_file_path,
+    save_uploaded_file,
+)
 
 app = Flask(__name__, static_folder=str(CLIENT_DIR))
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -39,13 +43,13 @@ def handle_global_exception(error):
 
 
 @app.errorhandler(413)
-def request_entity_too_large(error):
+def request_entity_too_large(_):
     """Handler for payload exceeding file size limit."""
     return jsonify({"status": "error", "error": "File size exceeds 16 MB limit."}), 413
 
 
 @app.errorhandler(404)
-def resource_not_found(error):
+def resource_not_found(_):
     """Handler for 404 missing resource."""
     return jsonify(
         {"status": "error", "error": "Requested endpoint or asset not found."}
@@ -83,7 +87,6 @@ def upload_file():
     """
     POST /api/upload
     Receives PDF or Image file, validates, and stores in session folder.
-    Validation errors (400) are caught explicitly; unhandled exceptions trigger global 500 handler.
     """
     if "file" not in request.files:
         return jsonify({"status": "error", "error": "No file payload in request"}), 400
@@ -109,7 +112,7 @@ def analyze_form():
     """
     POST /api/analyze
     Payload: { "session_id": "string" }
-    Triggers AI layout & field understanding extraction.
+    Triggers AI layout & field understanding extraction via Gemini Vision API.
     """
     data = request.get_json() or {}
     session_id = data.get("session_id")
@@ -117,7 +120,12 @@ def analyze_form():
     if not session_id:
         return jsonify({"status": "error", "error": "session_id is required"}), 400
 
-    analysis_result = analyze_form_document(file_path="", session_id=session_id)
+    file_path = get_session_file_path(session_id)
+    file_path_str = str(file_path) if file_path else ""
+
+    analysis_result = analyze_form_document(
+        file_path_str=file_path_str, session_id=session_id
+    )
     return jsonify(analysis_result), 200
 
 

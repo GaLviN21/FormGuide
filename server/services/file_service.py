@@ -1,10 +1,10 @@
 """
-File Service — Upload validation, session tracking, and PDF processing utilities.
-Template prepared for full implementation in Option A.
+File Service — Upload validation, session tracking, and file lookup.
 """
 
 import shutil
 import uuid
+from pathlib import Path
 
 from config import ALLOWED_EXTENSIONS, UPLOAD_FOLDER
 from werkzeug.utils import secure_filename
@@ -43,6 +43,16 @@ def save_uploaded_file(file_obj) -> dict:
         "extension": filename.rsplit(".", 1)[1].lower(),
         "size_bytes": saved_path.stat().st_size,
     }
+
+
+def get_session_file_path(session_id: str) -> Path | None:
+    """Retrieve the uploaded file path for a given session ID."""
+    session_dir = UPLOAD_FOLDER / session_id
+    if not session_dir.exists() or not session_dir.is_dir():
+        return None
+
+    files = [f for f in session_dir.iterdir() if f.is_file()]
+    return files[0] if files else None
 
 
 def cleanup_session(session_id: str) -> bool:
