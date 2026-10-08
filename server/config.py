@@ -26,4 +26,3 @@ ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "webp"}
 # AI Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 AI_MODEL_NAME = os.getenv("AI_MODEL_NAME", "gemini-3.8-flash")
-USE_MOCK_AI = os.getenv("USE_MOCK_AI", "false").lower() == "true"

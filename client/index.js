@@ -16,7 +16,7 @@ const state = {
   highlightsVisible: true
 };
 
-// Preset Sample Forms Database
+// Preset Sample Forms Database (Available strictly on Examples View)
 const SAMPLE_FORMS = {
   scholarship: {
     id: 'scholarship',
@@ -325,7 +325,7 @@ function initDropzone() {
   });
 }
 
-// File Upload Handler (Hooked with Backend AI API)
+// File Upload Handler (Direct Path — Surfaces Backend Errors Explicitly)
 async function handleFileUpload(file) {
   state.uploadedFile = file;
   if (state.uploadedFileUrl) {
@@ -336,7 +336,6 @@ async function handleFileUpload(file) {
   showToast(`Uploading ${file.name}...`);
   showLoadingScreen();
 
-  // Progress Step 1: Uploading file
   setLoadingStep(1, 'active');
   setLoadingStep(2, 'pending');
   setLoadingStep(3, 'pending');
@@ -351,61 +350,44 @@ async function handleFileUpload(file) {
       body: formData
     });
 
-    if (!uploadRes.ok) {
-      const errData = await uploadRes.json().catch(() => ({}));
-      throw new Error(errData.error || `Upload failed (${uploadRes.status})`);
+    const uploadData = await uploadRes.json().catch(() => ({}));
+
+    if (!uploadRes.ok || uploadData.status === 'error') {
+      throw new Error(uploadData.error || `Upload failed with status ${uploadRes.status}`);
     }
 
-    const uploadData = await uploadRes.json();
     setLoadingStep(1, 'done');
     setLoadingStep(2, 'active');
     document.getElementById('loading-bar').style.width = '40%';
 
-    // Progress Step 2: Calling AI Vision Analysis API
+    // Step 2: Calling AI Vision API
     const analyzeRes = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: uploadData.session_id })
     });
 
-    if (!analyzeRes.ok) {
-      const errData = await analyzeRes.json().catch(() => ({}));
-      throw new Error(errData.error || `Analysis failed (${analyzeRes.status})`);
+    const result = await analyzeRes.json().catch(() => ({}));
+
+    if (!analyzeRes.ok || result.status === 'error' || !result.form_data) {
+      const errorMsg = result.error || result.details || `Analysis failed with status ${analyzeRes.status}`;
+      throw new Error(errorMsg);
     }
 
     setLoadingStep(2, 'done');
-    setLoadingStep(3, 'active');
-    document.getElementById('loading-bar').style.width = '75%';
-
-    const result = await analyzeRes.json();
-    
     setLoadingStep(3, 'done');
     setLoadingStep(4, 'done');
     document.getElementById('loading-bar').style.width = '100%';
 
-    if (result && result.form_data) {
-      showToast('Form analyzed successfully!');
-      setTimeout(() => {
-        renderWorkspace(result.form_data);
-      }, 500);
-      return;
-    } else {
-      throw new Error('Invalid analysis response format from server');
-    }
+    showToast('Form analyzed successfully!');
+    setTimeout(() => {
+      renderWorkspace(result.form_data);
+    }, 400);
 
   } catch (err) {
-    console.warn('Backend API call failed, using client fallback:', err.message);
-    showToast(`Notice: ${err.message}. Running fallback mode.`);
-    
-    // Fallback simulation for offline dev
-    setTimeout(() => {
-      setLoadingStep(1, 'done');
-      setLoadingStep(2, 'done');
-      setLoadingStep(3, 'done');
-      setLoadingStep(4, 'done');
-      document.getElementById('loading-bar').style.width = '100%';
-      renderWorkspace(SAMPLE_FORMS.scholarship);
-    }, 1200);
+    console.error('Direct Processing Error:', err.message);
+    showErrorScreen(err.message);
+    showToast(`Error: ${err.message}`);
   }
 }
 
@@ -416,7 +398,7 @@ function setLoadingStep(num, status) {
   }
 }
 
-// Preset Loader
+// Preset Loader (Used for Examples Page — Renders instantly without loading animation)
 function loadSampleForm(presetKey) {
   state.uploadedFile = null;
   if (state.uploadedFileUrl) {
@@ -427,20 +409,14 @@ function loadSampleForm(presetKey) {
   const form = SAMPLE_FORMS[presetKey];
   if (!form) return;
 
-  showLoadingScreen();
-  
-  setTimeout(() => {
-    renderWorkspace(form);
-  }, 600);
+  // Render workspace instantly with zero loading screen or artificial delay
+  renderWorkspace(form);
 }
 
 // View Controller Transitions
 function showLoadingScreen() {
-  document.getElementById('upload-screen').classList.add('hidden');
-  document.getElementById('workspace-screen').classList.add('hidden');
-  
-  const loadingScreen = document.getElementById('loading-screen');
-  loadingScreen.classList.remove('hidden');
+  hideAllScreens();
+  document.getElementById('loading-screen').classList.remove('hidden');
 
   document.getElementById('loading-bar').style.width = '20%';
   setLoadingStep(1, 'active');
@@ -450,9 +426,27 @@ function showLoadingScreen() {
 }
 
 function showUploadScreen() {
-  document.getElementById('workspace-screen').classList.add('hidden');
-  document.getElementById('loading-screen').classList.add('hidden');
+  hideAllScreens();
   document.getElementById('upload-screen').classList.remove('hidden');
+}
+
+function showExamplesScreen() {
+  hideAllScreens();
+  document.getElementById('examples-screen').classList.remove('hidden');
+}
+
+function showErrorScreen(errorMessage) {
+  hideAllScreens();
+  document.getElementById('error-details-text').textContent = errorMessage;
+  document.getElementById('error-screen').classList.remove('hidden');
+}
+
+function hideAllScreens() {
+  document.getElementById('upload-screen').classList.add('hidden');
+  document.getElementById('examples-screen').classList.add('hidden');
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('error-screen').classList.add('hidden');
+  document.getElementById('workspace-screen').classList.add('hidden');
 }
 
 // Workspace Renderer
@@ -461,7 +455,7 @@ function renderWorkspace(formData) {
   state.checkedDocs.clear();
   state.checkedActions.clear();
 
-  document.getElementById('loading-screen').classList.add('hidden');
+  hideAllScreens();
   document.getElementById('workspace-screen').classList.remove('hidden');
 
   // Header Titles

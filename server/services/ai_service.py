@@ -1,17 +1,22 @@
 """
 AI Service — Gemini Vision & Multimodal Form Analysis Integration.
+Handles business logic and surfaces user-friendly AI processing errors.
 """
 
 import json
 import logging
 from pathlib import Path
 
-from config import AI_MODEL_NAME, GEMINI_API_KEY, USE_MOCK_AI
+from config import AI_MODEL_NAME, GEMINI_API_KEY
 from google import genai
-from google.genai import types
+from google.genai.errors import APIError
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+class AIProcessingError(Exception):
+    """Custom exception for user-facing Gemini API and Form Analysis business errors."""
 
 
 # --------------------------------------------------------------------------
@@ -121,186 +126,74 @@ Be thorough, precise, compassionate, and easy to understand.
 """
 
 
-def get_mime_type(file_path: Path) -> str:
-    ext = file_path.suffix.lower()
-    if ext == ".pdf":
-        return "application/pdf"
-    elif ext == ".png":
-        return "image/png"
-    elif ext in [".jpg", ".jpeg"]:
-        return "image/jpeg"
-    elif ext == ".webp":
-        return "image/webp"
-    return "application/octet-stream"
-
-
-def analyze_form_document(file_path_str: str, session_id: str) -> dict | None:
+def analyze_form_document(file_path_str: str, session_id: str) -> dict:
     """
-    Main entry point for AI Form Analysis.
-    Invokes Gemini Multimodal Vision API when GEMINI_API_KEY is configured and file exists.
-    Falls back gracefully to structured mock generator when key is missing or for test files.
+    Direct processing path for AI Form Analysis.
+    Surfaces clean, business-level errors for API key issues or Gemini API failures.
     """
+    if not GEMINI_API_KEY or not GEMINI_API_KEY.strip():
+        raise AIProcessingError(
+            "GEMINI_API_KEY is not configured on the server. Please add a valid GEMINI_API_KEY to server/.env"
+        )
+
     file_path = Path(file_path_str) if file_path_str else None
     if file_path is None or not file_path.exists():
-        logger.warning(
-            "File path is missing or does not exist for session %s.",
-            session_id,
+        raise FileNotFoundError(
+            f"Uploaded form file not found for session {session_id}."
         )
-        return None
 
-    if not USE_MOCK_AI and GEMINI_API_KEY:
-        try:
-            logger.info("Analyzing form with Gemini Vision API (%s)...", file_path.name)
-            return _call_gemini_vision_api(file_path, session_id)
-        except Exception as e:
-            logger.error(
-                "Gemini Vision API call failed: %s. Falling back to structured mock response.",
-                e,
-            )
-
-    logger.info("Using mock fallback analysis for session %s.", session_id)
-    return _get_mock_analysis_payload(session_id)
+    logger.info(
+        "Analyzing uploaded form with Gemini Vision API (%s)...", file_path.name
+    )
+    return _call_gemini_vision_api(file_path, session_id)
 
 
 def _call_gemini_vision_api(file_path: Path, session_id: str) -> dict:
-    """Call Gemini 2.0 Flash Vision API using google-genai SDK."""
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    mime_type = get_mime_type(file_path)
+    """Call Gemini Vision API and catch API errors into clean AIProcessingError messages."""
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY.strip())
+        uploaded_file = client.files.upload(file=file_path)
 
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
+        config = genai.types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_schema=FormAnalysisSchema,
+            temperature=0.2,
+        )
 
-    part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+        response = client.models.generate_content(
+            model=AI_MODEL_NAME, contents=[uploaded_file], config=config
+        )
 
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        response_mime_type="application/json",
-        response_schema=FormAnalysisSchema,
-        temperature=0.2,
-    )
+        raw_json = response.text
+        if not raw_json:
+            raise AIProcessingError("Gemini Vision API returned an empty response.")
 
-    response = client.models.generate_content(
-        model=AI_MODEL_NAME, contents=[part], config=config
-    )
+        parsed_data = json.loads(raw_json)
+        parsed_data["id"] = session_id
 
-    raw_json = response.text
-    parsed_data = json.loads(raw_json) if raw_json else {}
-    parsed_data["id"] = session_id
+        return {"status": "success", "session_id": session_id, "form_data": parsed_data}
 
-    return {"session_id": session_id, "form_data": parsed_data}
+    except APIError as api_err:
+        logger.exception("Gemini API Error:")
+        # Extract clean human-readable error message without leaking internal tracebacks
+        msg = getattr(api_err, "message", str(api_err))
+        if "API_KEY_INVALID" in str(api_err) or "API key not valid" in msg:
+            raise AIProcessingError(
+                "Gemini API key is invalid. Please check the GEMINI_API_KEY in server/.env"
+            ) from api_err
+        raise AIProcessingError(f"Gemini API Error: {msg}") from api_err
 
+    except json.JSONDecodeError as json_err:
+        logger.exception("Failed to parse Gemini output JSON:")
+        raise AIProcessingError(
+            "Failed to parse form analysis output from Gemini response."
+        ) from json_err
 
-def _get_mock_analysis_payload(session_id: str) -> dict:
-    """Structured mock JSON response conforming to ConcretePlan.md schema."""
-    return {
-        "session_id": session_id,
-        "form_data": {
-            "id": "form_analyzed_" + session_id[:8],
-            "title": "State Post-Matric Scholarship Application Form 2026",
-            "category": "Education & Financial Aid",
-            "complexity": "Medium",
-            "totalFields": 4,
-            "fields": [
-                {
-                    "id": "f1",
-                    "name": "Full Name of Applicant",
-                    "originalText": "1. Name of Applicant (in block letters): _________________",
-                    "type": "Personal Text",
-                    "isMandatory": True,
-                    "meaning": "Enter your full legal name in CAPITAL letters exactly as shown on your 10th Passing Certificate.",
-                    "format": "FIRSTNAME MIDDLENAME LASTNAME",
-                    "example": "ROHIT KUMAR SHARMA",
-                    "docRequired": "10th Passing Certificate",
-                    "pitfalls": [
-                        "Spelling must match Aadhaar card character-for-character."
-                    ],
-                },
-                {
-                    "id": "f2",
-                    "name": "Domicile Status & State Residency",
-                    "originalText": "2. Domicile Status: [ ] Permanent Resident [ ] Migrant",
-                    "type": "Residency Selection",
-                    "isMandatory": True,
-                    "meaning": "Select whether you are an official permanent resident of the state. Requires a Domicile Certificate issued by Tehsildar.",
-                    "format": "Checkbox + Certificate Ref No.",
-                    "example": "Permanent Resident (Cert: DOM/2025/9912)",
-                    "docRequired": "State Domicile Certificate",
-                    "pitfalls": [
-                        "Hostel or rental addresses do not qualify as permanent domicile."
-                    ],
-                },
-                {
-                    "id": "f3",
-                    "name": "Annual Family Income",
-                    "originalText": "3. Parents Income from all sources: Rs. _____________",
-                    "type": "Financial Currency",
-                    "isMandatory": True,
-                    "meaning": "Total combined yearly income earned by both parents during the previous financial year.",
-                    "format": "Numeric INR Amount",
-                    "example": "Rs. 1,80,000 / Year",
-                    "docRequired": "Revenue Department Income Certificate",
-                    "pitfalls": [
-                        "Must be below Rs 2,50,000/year for scholarship eligibility."
-                    ],
-                },
-                {
-                    "id": "f4",
-                    "name": "Aadhaar UID Number",
-                    "originalText": "4. Aadhaar Card No: ____-____-____",
-                    "type": "Government ID",
-                    "isMandatory": True,
-                    "meaning": "Your 12-digit national identification number. Bank account must be seeded with Aadhaar for DBT transfer.",
-                    "format": "12-digit Number",
-                    "example": "4589-1234-9876",
-                    "docRequired": "Aadhaar Card Copy",
-                    "pitfalls": [
-                        "Ensure NPCI seeding status is ACTIVE at your bank branch."
-                    ],
-                },
-            ],
-            "documents": [
-                {
-                    "id": "d1",
-                    "name": "State Domicile Certificate",
-                    "desc": "Proof of residence issued by Tehsildar.",
-                    "isMandatory": True,
-                },
-                {
-                    "id": "d2",
-                    "name": "Income Certificate (Current FY)",
-                    "desc": "Issued by Revenue Department showing income < 2.5 Lakhs.",
-                    "isMandatory": True,
-                },
-                {
-                    "id": "d3",
-                    "name": "Aadhaar Passbook Copy",
-                    "desc": "Showing A/c number, name, and IFSC code.",
-                    "isMandatory": True,
-                },
-            ],
-            "actions": [
-                {
-                    "id": "a1",
-                    "name": "Institutional Verification Stamp",
-                    "desc": "Signature of College Principal on Annexure A.",
-                }
-            ],
-            "steps": [
-                {
-                    "num": 1,
-                    "title": "Gather Revenue Certificates",
-                    "desc": "Obtain Domicile and Income certificates from government portal.",
-                },
-                {
-                    "num": 2,
-                    "title": "Verify Bank NPCI Seeding",
-                    "desc": "Confirm your bank account is linked to Aadhaar for Direct Benefit Transfer.",
-                },
-                {
-                    "num": 3,
-                    "title": "Fill Details & Attach Signatures",
-                    "desc": "Complete form fields and self-attest all photocopy attachments.",
-                },
-            ],
-        },
-    }
+    except Exception as e:
+        if isinstance(e, (AIProcessingError, FileNotFoundError, ValueError)):
+            raise
+        logger.exception("Unexpected error in Gemini Vision API integration:")
+        raise AIProcessingError(
+            "An error occurred while analyzing the document with Gemini Vision API."
+        ) from e

@@ -19,7 +19,7 @@
   <!-- Top Navigation Header -->
   <header class="app-header">
     <div class="header-left">
-      <div class="brand-logo">
+      <div class="brand-logo" onclick="showUploadScreen()" style="cursor: pointer;">
         <div class="logo-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -37,13 +37,8 @@
     </div>
 
     <div class="header-right">
-      <!-- Quick Demo Selectors -->
-      <div class="demo-samples-group">
-        <span class="demo-label">Try Sample:</span>
-        <button class="btn btn-sm btn-ghost" onclick="loadSampleForm('scholarship')">Scholarship Form</button>
-        <button class="btn btn-sm btn-ghost" onclick="loadSampleForm('domicile')">Domicile Status</button>
-        <button class="btn btn-sm btn-ghost" onclick="loadSampleForm('tax')">Tax Declaration</button>
-      </div>
+      <button class="btn btn-sm btn-ghost" onclick="showUploadScreen()">Upload Form</button>
+      <button class="btn btn-sm btn-secondary" onclick="showExamplesScreen()">Interactive Examples</button>
     </div>
   </header>
 
@@ -55,7 +50,7 @@
       <div class="hero-content">
         <h1 class="hero-title">Understand & Fill Any Complex Form in <span class="gradient-text">Plain English</span></h1>
         <p class="hero-subtitle">
-          Stop struggling with legal jargon, obscure field names, and missing annexures. Upload any PDF or scanned form to instantly get clear explanations, required document lists, and guided steps.
+          Stop struggling with legal jargon, obscure field names, and missing annexures. Upload any PDF or scanned form to get AI explanations, required document lists, and guided steps.
         </p>
 
         <!-- Drag & Drop Upload Zone -->
@@ -84,39 +79,54 @@
           </div>
         </div>
 
-        <!-- Sample Form Presets Grid -->
-        <div class="preset-samples-wrapper">
-          <div class="preset-title">Or test instantly with interactive pre-loaded forms:</div>
-          <div class="presets-grid">
-            <div class="preset-card" onclick="loadSampleForm('scholarship')">
-              <div class="preset-icon scholarship">🎓</div>
-              <div class="preset-info">
-                <h4>Post-Matric Scholarship Form</h4>
-                <p>12 fields • Domicile, Family Income, Bank Annexures</p>
-              </div>
-              <div class="preset-arrow">→</div>
-            </div>
+        <div class="upload-footer-link" style="margin-top: 1.5rem;">
+          <span style="color: var(--text-muted); font-size: 0.875rem;">Want to test without uploading a file? </span>
+          <button class="link-btn" onclick="showExamplesScreen()">Explore Pre-loaded Demo Examples →</button>
+        </div>
 
-            <div class="preset-card" onclick="loadSampleForm('domicile')">
-              <div class="preset-icon domicile">🏛️</div>
-              <div class="preset-info">
-                <h4>State Domicile Certificate</h4>
-                <p>9 fields • Tehsil verification, Residence proof</p>
-              </div>
-              <div class="preset-arrow">→</div>
-            </div>
+      </div>
+    </section>
 
-            <div class="preset-card" onclick="loadSampleForm('tax')">
-              <div class="preset-icon tax">📄</div>
-              <div class="preset-info">
-                <h4>Annual Tax Declaration</h4>
-                <p>10 fields • Investment proof, 80C deductions</p>
-              </div>
-              <div class="preset-arrow">→</div>
+    <!-- Dedicated Interactive Examples Screen -->
+    <section class="examples-section hidden" id="examples-screen">
+      <div class="examples-container">
+        <div class="examples-header">
+          <h2>Interactive Demo Examples</h2>
+          <p>Explore pre-loaded form breakdowns demonstrating field explanations, document checklists, and completion steps (No upload or API key required).</p>
+        </div>
+
+        <div class="presets-grid">
+          <div class="preset-card" onclick="loadSampleForm('scholarship')">
+            <div class="preset-icon scholarship">🎓</div>
+            <div class="preset-info">
+              <h4>Post-Matric Scholarship Form</h4>
+              <p>8 fields • Domicile, Family Income, Bank Annexures</p>
             </div>
+            <div class="preset-arrow">→</div>
+          </div>
+
+          <div class="preset-card" onclick="loadSampleForm('domicile')">
+            <div class="preset-icon domicile">🏛️</div>
+            <div class="preset-info">
+              <h4>State Domicile Certificate</h4>
+              <p>3 fields • Tehsil verification, Residence proof</p>
+            </div>
+            <div class="preset-arrow">→</div>
+          </div>
+
+          <div class="preset-card" onclick="loadSampleForm('tax')">
+            <div class="preset-icon tax">📄</div>
+            <div class="preset-info">
+              <h4>Annual Tax Declaration</h4>
+              <p>3 fields • Investment proof, 80C deductions</p>
+            </div>
+            <div class="preset-arrow">→</div>
           </div>
         </div>
 
+        <div style="margin-top: 2rem; text-align: center;">
+          <button class="btn btn-secondary" onclick="showUploadScreen()">← Back to File Upload</button>
+        </div>
       </div>
     </section>
 
@@ -127,7 +137,7 @@
           <div class="ring-child"></div>
         </div>
         <h3 class="loading-title" id="loading-step-title">Analyzing Form Structure...</h3>
-        <p class="loading-subtitle" id="loading-step-desc">Extracting layout, detecting fields, and generating plain language explanations.</p>
+        <p class="loading-subtitle" id="loading-step-desc">Extracting layout, detecting fields, and generating plain language explanations via Gemini Vision.</p>
         
         <div class="loading-progress-bar">
           <div class="progress-fill" id="loading-bar"></div>
@@ -135,9 +145,27 @@
 
         <div class="loading-steps-list">
           <div class="step-item done" id="step-1"><span class="step-check">✓</span> Uploading & validating document</div>
-          <div class="step-item active" id="step-2"><span class="step-check">⏳</span> OCR & layout region detection</div>
+          <div class="step-item active" id="step-2"><span class="step-check">⏳</span> Vision OCR & layout region detection</div>
           <div class="step-item pending" id="step-3"><span class="step-check">○</span> Translating technical terms into plain English</div>
           <div class="step-item pending" id="step-4"><span class="step-check">○</span> Building document & action requirements checklist</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Backend Error Screen (Displayed on API failure) -->
+    <section class="error-section hidden" id="error-screen">
+      <div class="error-card glass-panel">
+        <div class="error-icon-wrapper">⚠️</div>
+        <h3 class="error-title">Document Analysis Failed</h3>
+        <p class="error-subtitle">The server returned an error while attempting to process the form.</p>
+        
+        <div class="error-details-box" id="error-details-text">
+          GEMINI_API_KEY is not configured on the server. Please add your GEMINI_API_KEY to server/.env
+        </div>
+
+        <div class="error-actions-group">
+          <button class="btn btn-primary" onclick="showUploadScreen()">← Try Upload Again</button>
+          <button class="btn btn-secondary" onclick="showExamplesScreen()">Explore Demo Examples</button>
         </div>
       </div>
     </section>
@@ -191,7 +219,6 @@
 
           <div class="viewer-body" id="viewer-canvas-wrapper">
             <div class="canvas-container" id="canvas-container">
-              <!-- Rendered Document Preview Image or Mock Interactive Form Sheet -->
               <div class="mock-document-sheet" id="document-sheet">
                 <!-- Dynamic Bounding Boxes overlays rendered via JS -->
               </div>

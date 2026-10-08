@@ -7,7 +7,7 @@ import logging
 from config import CLIENT_DIR, MAX_CONTENT_LENGTH
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
-from services.ai_service import analyze_form_document
+from services.ai_service import AIProcessingError, analyze_form_document
 from services.file_service import (
     cleanup_session,
     get_session_file_path,
@@ -25,19 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------
-# Centralized Error Handlers (Flask Global Exception Handling)
+# Centralized Error Handlers
 # --------------------------------------------------------------------------
 @app.errorhandler(Exception)
 def handle_global_exception(error):
     """
     Global exception handler for unhandled 500 server errors.
-    Eliminates the need for repetitive try/except 500 blocks in individual routes.
+    Logs internal tracebacks on the server and returns a clean, safe message to the client.
     """
-    logger.error("Global Exception Caught: %s", error, exc_info=True)
+    logger.error("Unhandled Server Exception: %s", error, exc_info=True)
     response = {
         "status": "error",
-        "error": "Internal Server Error",
-        "details": str(error),
+        "error": "An internal server error occurred while processing your request. Please try again later.",
     }
     return jsonify(response), 500
 
@@ -57,7 +56,7 @@ def resource_not_found(_):
 
 
 # --------------------------------------------------------------------------
-# Static Client Routes (Serves Light Theme Frontend)
+# Static Client Routes
 # --------------------------------------------------------------------------
 @app.route("/")
 def index():
@@ -87,6 +86,7 @@ def upload_file():
     """
     POST /api/upload
     Receives PDF or Image file, validates, and stores in session folder.
+    Business & upload validation errors (400) return user-friendly messages.
     """
     if "file" not in request.files:
         return jsonify({"status": "error", "error": "No file payload in request"}), 400
@@ -112,7 +112,7 @@ def analyze_form():
     """
     POST /api/analyze
     Payload: { "session_id": "string" }
-    Triggers AI layout & field understanding extraction via Gemini Vision API.
+    Direct AI path: calls Gemini Vision API. Surfaces clean business/API errors.
     """
     data = request.get_json() or {}
     session_id = data.get("session_id")
@@ -123,10 +123,13 @@ def analyze_form():
     file_path = get_session_file_path(session_id)
     file_path_str = str(file_path) if file_path else ""
 
-    analysis_result = analyze_form_document(
-        file_path_str=file_path_str, session_id=session_id
-    )
-    return jsonify(analysis_result), 200
+    try:
+        analysis_result = analyze_form_document(
+            file_path_str=file_path_str, session_id=session_id
+        )
+        return jsonify(analysis_result), 200
+    except (ValueError, FileNotFoundError, AIProcessingError) as ve:
+        return jsonify({"status": "error", "error": str(ve)}), 400
 
 
 @app.route("/api/session/<session_id>", methods=["DELETE"])
