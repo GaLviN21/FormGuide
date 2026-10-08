@@ -5,6 +5,8 @@
 // State Management
 const state = {
   currentForm: null,
+  uploadedFile: null,
+  uploadedFileUrl: null,
   activeTab: 'fields',
   searchQuery: '',
   filterCategory: 'all',
@@ -21,7 +23,7 @@ const SAMPLE_FORMS = {
     title: 'State Post-Matric Scholarship Application Form 2026',
     category: 'Education & Financial Aid',
     complexity: 'Medium',
-    totalFields: 12,
+    totalFields: 8,
     fields: [
       {
         id: 'f1',
@@ -165,7 +167,7 @@ const SAMPLE_FORMS = {
     title: 'Application for Grant of Domicile / Residence Certificate',
     category: 'Government & Legal Residency',
     complexity: 'Easy',
-    totalFields: 8,
+    totalFields: 3,
     fields: [
       {
         id: 'df1',
@@ -225,7 +227,7 @@ const SAMPLE_FORMS = {
     title: 'Form 12BB — Investment & Deduction Declaration Form',
     category: 'Income Tax / Payroll',
     complexity: 'Medium',
-    totalFields: 10,
+    totalFields: 3,
     fields: [
       {
         id: 'tf1',
@@ -323,10 +325,22 @@ function initDropzone() {
   });
 }
 
-// File Upload Handler
+// File Upload Handler (Hooked with Backend AI API)
 async function handleFileUpload(file) {
-  showToast(`Uploaded ${file.name}`);
+  state.uploadedFile = file;
+  if (state.uploadedFileUrl) {
+    URL.revokeObjectURL(state.uploadedFileUrl);
+  }
+  state.uploadedFileUrl = URL.createObjectURL(file);
+
+  showToast(`Uploading ${file.name}...`);
   showLoadingScreen();
+
+  // Progress Step 1: Uploading file
+  setLoadingStep(1, 'active');
+  setLoadingStep(2, 'pending');
+  setLoadingStep(3, 'pending');
+  setLoadingStep(4, 'pending');
 
   try {
     const formData = new FormData();
@@ -337,48 +351,79 @@ async function handleFileUpload(file) {
       body: formData
     });
 
-    if (uploadRes.ok) {
-      const uploadData = await uploadRes.json();
-      const analyzeRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: uploadData.session_id })
-      });
-      
-      if (analyzeRes.ok) {
-        const result = await analyzeRes.json();
-        renderWorkspace(result.form_data);
-        return;
-      }
+    if (!uploadRes.ok) {
+      const errData = await uploadRes.json().catch(() => ({}));
+      throw new Error(errData.error || `Upload failed (${uploadRes.status})`);
     }
-  } catch (err) {
-    console.log('Server API not reachable, running client-side simulation...');
-  }
 
-  // Fallback / Simulation for testing
-  setTimeout(() => {
-    document.getElementById('step-1').className = 'step-item done';
-    document.getElementById('step-2').className = 'step-item active';
-    document.getElementById('loading-bar').style.width = '50%';
-  }, 700);
+    const uploadData = await uploadRes.json();
+    setLoadingStep(1, 'done');
+    setLoadingStep(2, 'active');
+    document.getElementById('loading-bar').style.width = '40%';
 
-  setTimeout(() => {
-    document.getElementById('step-2').className = 'step-item done';
-    document.getElementById('step-3').className = 'step-item active';
-    document.getElementById('loading-bar').style.width = '80%';
-  }, 1400);
+    // Progress Step 2: Calling AI Vision Analysis API
+    const analyzeRes = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: uploadData.session_id })
+    });
 
-  setTimeout(() => {
-    document.getElementById('step-3').className = 'step-item done';
-    document.getElementById('step-4').className = 'step-item done';
+    if (!analyzeRes.ok) {
+      const errData = await analyzeRes.json().catch(() => ({}));
+      throw new Error(errData.error || `Analysis failed (${analyzeRes.status})`);
+    }
+
+    setLoadingStep(2, 'done');
+    setLoadingStep(3, 'active');
+    document.getElementById('loading-bar').style.width = '75%';
+
+    const result = await analyzeRes.json();
+    
+    setLoadingStep(3, 'done');
+    setLoadingStep(4, 'done');
     document.getElementById('loading-bar').style.width = '100%';
 
-    renderWorkspace(SAMPLE_FORMS.scholarship);
-  }, 2100);
+    if (result && result.form_data) {
+      showToast('Form analyzed successfully!');
+      setTimeout(() => {
+        renderWorkspace(result.form_data);
+      }, 500);
+      return;
+    } else {
+      throw new Error('Invalid analysis response format from server');
+    }
+
+  } catch (err) {
+    console.warn('Backend API call failed, using client fallback:', err.message);
+    showToast(`Notice: ${err.message}. Running fallback mode.`);
+    
+    // Fallback simulation for offline dev
+    setTimeout(() => {
+      setLoadingStep(1, 'done');
+      setLoadingStep(2, 'done');
+      setLoadingStep(3, 'done');
+      setLoadingStep(4, 'done');
+      document.getElementById('loading-bar').style.width = '100%';
+      renderWorkspace(SAMPLE_FORMS.scholarship);
+    }, 1200);
+  }
+}
+
+function setLoadingStep(num, status) {
+  const stepEl = document.getElementById(`step-${num}`);
+  if (stepEl) {
+    stepEl.className = `step-item ${status}`;
+  }
 }
 
 // Preset Loader
 function loadSampleForm(presetKey) {
+  state.uploadedFile = null;
+  if (state.uploadedFileUrl) {
+    URL.revokeObjectURL(state.uploadedFileUrl);
+    state.uploadedFileUrl = null;
+  }
+
   const form = SAMPLE_FORMS[presetKey];
   if (!form) return;
 
@@ -386,7 +431,7 @@ function loadSampleForm(presetKey) {
   
   setTimeout(() => {
     renderWorkspace(form);
-  }, 800);
+  }, 600);
 }
 
 // View Controller Transitions
@@ -398,10 +443,10 @@ function showLoadingScreen() {
   loadingScreen.classList.remove('hidden');
 
   document.getElementById('loading-bar').style.width = '20%';
-  document.getElementById('step-1').className = 'step-item active';
-  document.getElementById('step-2').className = 'step-item pending';
-  document.getElementById('step-3').className = 'step-item pending';
-  document.getElementById('step-4').className = 'step-item pending';
+  setLoadingStep(1, 'active');
+  setLoadingStep(2, 'pending');
+  setLoadingStep(3, 'pending');
+  setLoadingStep(4, 'pending');
 }
 
 function showUploadScreen() {
@@ -429,7 +474,7 @@ function renderWorkspace(formData) {
   document.getElementById('count-docs').textContent = formData.documents.length;
   document.getElementById('count-steps').textContent = formData.steps.length;
 
-  // Render Document Sheet Image Canvas
+  // Render Document Sheet Canvas
   renderDocumentSheet(formData);
 
   // Render Tabs Panes
@@ -443,30 +488,56 @@ function renderWorkspace(formData) {
 // Document Canvas Sheet Renderer
 function renderDocumentSheet(formData) {
   const sheet = document.getElementById('document-sheet');
-  sheet.innerHTML = `
-    <div class="doc-sheet-header">
-      <h3>${formData.title}</h3>
-      <p>Official Form Document Preview • ${formData.category}</p>
-    </div>
-  `;
+  sheet.innerHTML = '';
 
-  formData.fields.forEach((field, index) => {
-    const fieldEl = document.createElement('div');
-    fieldEl.className = 'doc-sheet-field';
-    fieldEl.id = `sheet-field-${field.id}`;
-    fieldEl.innerHTML = `
-      <span class="field-num-tag">Field ${index + 1}</span>
-      <span class="doc-sheet-label">${field.name} ${field.isMandatory ? '*' : ''}</span>
-      <div class="doc-sheet-box"></div>
+  // Check if we have an uploaded image file preview
+  if (state.uploadedFile && state.uploadedFile.type.startsWith('image/')) {
+    sheet.innerHTML = `
+      <div class="uploaded-image-preview-wrapper" style="position: relative; text-align: center;">
+        <img src="${state.uploadedFileUrl}" alt="Uploaded Form Document" style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+        <div class="image-fields-overlay" id="image-fields-overlay" style="position: absolute; top:0; left:0; width:100%; height:100%; pointer-events: none;"></div>
+      </div>
     `;
 
-    fieldEl.addEventListener('click', () => {
-      switchTab('fields');
-      expandFieldAccordion(field.id);
+    const overlay = document.getElementById('image-fields-overlay');
+    formData.fields.forEach((field, index) => {
+      const tag = document.createElement('div');
+      tag.className = 'doc-sheet-field';
+      tag.id = `sheet-field-${field.id}`;
+      tag.style.pointerEvents = 'auto';
+      tag.innerHTML = `
+        <span class="field-num-tag">Field ${index + 1}: ${field.name}</span>
+      `;
+
+      tag.addEventListener('click', () => {
+        switchTab('fields');
+        expandFieldAccordion(field.id);
+      });
+
+      overlay.appendChild(tag);
     });
 
-    sheet.appendChild(fieldEl);
-  });
+  } else {
+    // Default / PDF / Sample Form Sheet rendering
+    let html = `
+      <div class="doc-sheet-header">
+        <h3>${formData.title}</h3>
+        <p>Official Form Document Preview • ${formData.category}</p>
+      </div>
+    `;
+
+    formData.fields.forEach((field, index) => {
+      html += `
+        <div class="doc-sheet-field" id="sheet-field-${field.id}" onclick="switchTab('fields'); expandFieldAccordion('${field.id}')">
+          <span class="field-num-tag">Field ${index + 1}</span>
+          <span class="doc-sheet-label">${field.name} ${field.isMandatory ? '*' : ''}</span>
+          <div class="doc-sheet-box"></div>
+        </div>
+      `;
+    });
+
+    sheet.innerHTML = html;
+  }
 }
 
 // Field Explorer Renderer
@@ -692,7 +763,7 @@ function updateReadinessCounter() {
   if (!state.currentForm) return;
   const total = state.currentForm.documents.length;
   const count = state.checkedDocs.size;
-  const pct = Math.round((count / total) * 100);
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
 
   document.getElementById('readiness-text').textContent = `${count} of ${total} Ready`;
   document.getElementById('readiness-bar').style.width = `${pct}%`;
@@ -804,5 +875,5 @@ function showToast(msg) {
   setTimeout(() => {
     toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 300);
-  }, 2500);
+  }, 3000);
 }
